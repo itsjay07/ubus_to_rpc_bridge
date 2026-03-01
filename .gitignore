@@ -1,0 +1,28 @@
+# Binaries
+bin/
+obj/
+*.o
+*.a
+*.so
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*~
+
+# Socket files
+/tmp/greet_rpc.sock
+/tmp/bridge_listener.sock
+
+# Build artifacts
+*.out
+*.exe
+
+# IDE files
+.vscode/
+.idea/
+
+# Backup files
+*.backup
+*.bak
