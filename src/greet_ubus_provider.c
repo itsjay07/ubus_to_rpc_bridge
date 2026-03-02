@@ -11,28 +11,23 @@ static struct ubus_context *ctx;
 static struct ubus_object obj;
 static struct blob_buf b;
 
-enum {
-    WELCOME_ATTR_NAME,
-    __WELCOME_ATTR_MAX
-};
-
-static const struct blobmsg_policy welcome_policy[__WELCOME_ATTR_MAX] = {
-    [WELCOME_ATTR_NAME] = { "name", BLOBMSG_TYPE_STRING },
-};
-
 static int handle_welcome(struct ubus_context *ctx, struct ubus_object *obj,
                           struct ubus_request_data *req, const char *method,
                           struct blob_attr *msg) {
-    struct blob_attr *tb[__WELCOME_ATTR_MAX];
+    struct blob_attr *tb[1];
     const char *name;
 
     log_debug("Handling welcome request");
-    blobmsg_parse(welcome_policy, __WELCOME_ATTR_MAX, tb, blob_data(msg), blob_len(msg));
-    if (!tb[WELCOME_ATTR_NAME]) {
+    
+    static const struct blobmsg_policy policy = { "name", BLOBMSG_TYPE_STRING };
+    blobmsg_parse(&policy, 1, tb, blob_data(msg), blob_len(msg));
+
+    if (!tb[0]) {
         log_warn("Missing name argument");
         return UBUS_STATUS_INVALID_ARGUMENT;
     }
-    name = blobmsg_data(tb[WELCOME_ATTR_NAME]);
+
+    name = blobmsg_data(tb[0]);
     log_info("Greeting requested for: %s", name);
 
     char response[256];
@@ -45,13 +40,19 @@ static int handle_welcome(struct ubus_context *ctx, struct ubus_object *obj,
     return UBUS_STATUS_OK;
 }
 
-/* ✅ Use UBUS_METHOD macro – this is the critical fix */
-static const struct ubus_method greet_methods[] = {
-    UBUS_METHOD("welcome", handle_welcome, welcome_policy),
+/* SIMPLE method definition - exactly like your working test */
+static struct ubus_method greet_methods[] = {
+    {
+        .name = "welcome",
+        .handler = handle_welcome
+    },
 };
 
-static struct ubus_object_type greet_object_type =
-    UBUS_OBJECT_TYPE("greet", greet_methods);
+static struct ubus_object_type greet_object_type = {
+    .name = "greet",
+    .methods = greet_methods,
+    .n_methods = 1
+};
 
 static void ubus_connection_lost(struct ubus_context *ctx) {
     log_error("Connection to ubus lost");
@@ -60,16 +61,21 @@ static void ubus_connection_lost(struct ubus_context *ctx) {
 
 int main(int argc, char **argv) {
     log_info("Starting Greet ubus provider");
-    ctx = ubus_connect(NULL);
-    if (!ctx) { log_error("Failed to connect to ubus"); return 1; }
+    
+    ctx = ubus_connect("/tmp/ubus.sock");
+    if (!ctx) {
+        log_error("Failed to connect to ubus");
+        return 1;
+    }
     log_info("Connected to ubus");
+    
     ctx->connection_lost = ubus_connection_lost;
 
-    memset(&obj, 0, sizeof(obj));   // ensure zeroed
+    memset(&obj, 0, sizeof(obj));
     obj.name = "greet";
     obj.type = &greet_object_type;
     obj.methods = greet_methods;
-    obj.n_methods = ARRAY_SIZE(greet_methods);
+    obj.n_methods = 1;
 
     int ret = ubus_add_object(ctx, &obj);
     if (ret) {
@@ -82,6 +88,7 @@ int main(int argc, char **argv) {
     ubus_add_uloop(ctx);
     uloop_init();
     uloop_run();
+    
     ubus_free(ctx);
     return 0;
 }
