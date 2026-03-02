@@ -52,78 +52,167 @@ This project implements a **2-way bridge** between two different IPC systems:
 ---
 
 ## 🏗️ ARCHITECTURE
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           SYSTEM ARCHITECTURE                               │
-│                  Bidirectional Bridge between ubus and RPC                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-                                    ┌─────────────────┐
-                                    │   RPC Client    │
-                                    │  (test client)  │
-                                    └────────┬────────┘
-                                             │ JSON-RPC
-                                             ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              RPC SERVER                                     │
-│                              rpc_server.c                                   │
-│                                                                             │
-│                      ┌─────────────────────────┐                            │
-│                      │  Listens on:            │                            │
-│                      │  /tmp/greet_rpc.sock    │                            │
-│                      └─────────────────────────┘                            │
-│                            ▲                    ▲                           │
-│                     (2) RPC│                    │(1) Forward                │
-│                        Call│                    │                           │
-└────────────────────────────┼────────────────────┼───────────────────────────┘
-                             │                    │
-                    ┌────────┴────────┐  ┌────────┴────────┐
-                    │                 │  │                 │
-                    ▼                 │  │                 ▼
-┌─────────────────────────────────────┼──┼────────────────────────────────────┐
-│           UBUS-RPC BRIDGE           │  │                                    │
-│           ubus_rpc_bridge.c         │  │                                    │
-│                                     │  │                                    │
-│    ┌──────────────────────┐         │  │         ┌──────────────────────┐   │
-│    │   ubus Client Side   │◄────────┘  └────────►│   RPC Client Side    │   │
-│    │   (calls ubus)       │                       │   (calls RPC)        │  │
-│    └──────────┬───────────┘                       └──────────┬───────────┘  │
-│               │                                              │              │
-│         (3) ubus│Call                                   (4) RPC│Call        │
-│               │                                              │              │
-└───────────────┼──────────────────────────────────────────────┼───────────────
-                │                                              │
-                ▼                                              ▼
-┌──────────────────────────────┐                  ┌──────────────────────────┐
-│         ubus-daemon          │                  │      RPC SERVER          │
-│            ubusd             │                  │     (already shown)      │
-│   Listens on: /tmp/ubus.sock │                  │                          │
-└──────────────┬───────────────┘                  └──────────────────────────┘
-               │
-         (5) ubus│Call
-               ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           GREET PROVIDER                                    │
-│                        greet_ubus_provider.c                                │
-│                                                                             │
-│                    ┌─────────────────────────┐                              │
-│                    │  ubus Object: "greet"    │                             │
-│                    │  Method: "welcome"       │                             │
-│                    │  Policy: name (string)   │                             │
-│                    └─────────────────────────┘                              │
-│                                                                             │
-│  Response: "Hello X, Welcome to XYZ Company"                                │
-└─────────────────────────────────────────────────────────────────────────────┘
+```text
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                     BIDIRECTIONAL UBUS ↔ RPC BRIDGE                          │
+└───────────────────────────────────────────────────────────────────────────────┘
 
 
+                        ┌──────────────────────┐
+                        │      RPC CLIENT      │
+                        │   /tmp/rpc_client    │
+                        └──────────┬───────────┘
+                                   │
+                     JSON-RPC      │
+               {method:"welcome"}  │
+                                   ▼
+                        ┌──────────────────────┐
+                        │      RPC SERVER      │
+                        │ /tmp/greet_rpc.sock  │
+                        └──────────┬───────────┘
+                                   │
+                                   ▼
+═══════════════════════════════════════════════════════════════════════════════
+                        UBUS ↔ RPC BRIDGE (ubus_rpc_bridge.c)
+═══════════════════════════════════════════════════════════════════════════════
+        ┌──────────────────────┐        ┌──────────────────────┐
+        │   ubus Client Side   │  ↔↔↔  │   RPC Client Side    │
+        │ (handles ubus calls) │        │ (handles RPC calls)  │
+        └──────────┬───────────┘        └──────────┬───────────┘
+                   │                                 │
+                   ▼                                 ▼
+        ┌──────────────────────┐        ┌──────────────────────┐
+        │        ubusd         │        │      RPC SERVER      │
+        │  /tmp/ubus.sock      │        │  (external service)  │
+        └──────────┬───────────┘        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌───────────────────────────────────────────┐
+        │              GREET PROVIDER               │
+        │     (greet_ubus_provider.c)               │
+        │-------------------------------------------│
+        │ ubus Object : "greet"                     │
+        │ Method      : "welcome"                   │
+        │ Policy      : name (string)               │
+        │ Response    : { "message": "Hello X" }    │
+        └───────────────────────────────────────────┘
 
-### Data Flow
-| Direction | Path  |
-|-----------|-------|
-|  **RPC → ubus**   | `rpc-client → rpc-server → bridge → ubus → greet-provider → response` |
-|  **ubus → RPC**   | `ubus CLI → bridge → rpc-server → response` |
 
----
+======================== COMMUNICATION FLOW ========================
+
+RPC → ubus:
+RPC Client → RPC Server → Bridge → ubusd → Greet Provider
+
+ubus → RPC:
+ubus Client → Bridge → RPC Server → RPC Client
+
+====================================================================
+```
+```text
+═══════════════════════════════════════════════════════════════════════════════
+                               DATA FLOW
+═══════════════════════════════════════════════════════════════════════════════
+
+COMMUNICATION FLOW
+───────────────────────────────────────────────────────────────────────────────
+Direction      Path
+───────────────────────────────────────────────────────────────────────────────
+(1,2)  RPC → ubus
+       RPC Client → RPC Server → Bridge → ubusd → Provider
+
+(3,4,5) ubus → RPC
+       ubus Client → Bridge → RPC Server → RPC Client
+───────────────────────────────────────────────────────────────────────────────
+
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                              COMPONENT DETAILS
+═══════════════════════════════════════════════════════════════════════════════
+
+Component      File/Source                     Purpose
+───────────────────────────────────────────────────────────────────────────────
+ubusd          System daemon                   OpenWrt message bus core
+               (/usr/local/sbin/ubusd)         Manages ubus objects & routing
+
+Provider       src/greet_ubus_provider.c       Registers "greet" object
+                                               Handles "welcome" method
+
+RPC Server     src/rpc_server.c                Listens on Unix socket
+                                               Processes JSON-RPC requests
+
+Bridge         src/ubus_rpc_bridge.c           Core connector
+                                               Registers "rpc_greet"
+                                               Forwards requests both ways
+
+Test Client    /tmp/rpc_client.c               Test tool for RPC → ubus
+               (not in repo)                   Sends length-prefixed JSON
+
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                              PROTOCOL STACK
+═══════════════════════════════════════════════════════════════════════════════
+
+RPC ↔ Bridge
+───────────────────────────────────────────────────────────────────────────────
+Application : JSON-RPC
+Format      : { "id":1, "method":"greet.welcome", "params":{...} }
+
+Framing     : 4-byte length prefix + JSON payload
+Example     : [00 00 00 48][JSON string]
+
+Transport   : Unix Domain Socket (SOCK_STREAM)
+Socket      : /tmp/greet_rpc.sock
+───────────────────────────────────────────────────────────────────────────────
+
+
+Bridge ↔ ubus
+───────────────────────────────────────────────────────────────────────────────
+Protocol    : ubus binary protocol
+Connection  : ubus_connect(NULL) or explicit socket path
+Operations  : ubus_add_object()
+              ubus_invoke()
+              ubus_send_reply()
+───────────────────────────────────────────────────────────────────────────────
+
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                    MESSAGE SEQUENCE A : RPC → ubus
+═══════════════════════════════════════════════════════════════════════════════
+
+RPC Client      RPC Server        Bridge          ubusd         Provider
+    │                │                │               │               │
+    │──JSON Req─────>│                │               │               │
+    │ {greet.welcome}│                │               │               │
+    │                │──Forward──────>│               │               │
+    │                │                │──ubus call───>│               │
+    │                │                │ "greet.welcome"               │
+    │                │                │               │──invoke──────>│
+    │                │                │               │<──response────│
+    │                │                │<──ubus resp───│               │
+    │                │<──RPC resp─────│               │               │
+    │<──Result───────│                │               │               │
+
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                    MESSAGE SEQUENCE B : ubus → RPC
+═══════════════════════════════════════════════════════════════════════════════
+
+ubus Client      Bridge         RPC Server        RPC Client
+     │               │               │               │
+     │──ubus call───>│               │               │
+     │ "rpc_greet"   │               │               │
+     │               │──RPC Req─────>│               │
+     │               │ {greet.welcome}              │
+     │               │               │──response────>│
+     │               │<──RPC resp────│               │
+     │<──ubus resp───│               │               │
+
+═══════════════════════════════════════════════════════════════════════════════
+```
 
 ## 📦 PREREQUISITES
 
@@ -499,6 +588,7 @@ Order matters - Start ubusd → provider → rpc-server → bridge
 Check logs thoroughly - "Invalid argument" was consistent clue
 
 Work in Linux filesystem - Avoid WSL mounted drives for development
+
 
 
 
